@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Milky Way Idle - 自动任务
 // @namespace    https://github.com/NightingaleWK
-// @version      1.0.1
+// @version      1.0.2
 // @description  自动接取任务、添加到队列，空闲时挂机采摘小行星带
 // @author       NightingaleWK
 // @match        https://www.milkywayidle.com/game*
@@ -226,7 +226,7 @@
 
     // ─── 自动操作 ────────────────────────────────
 
-    /** 处理单个任务: 前往 → 添加到队列 */
+    /** 处理单个任务: 前往 → 开始/添加到队列 */
     async function processOneTask(task) {
         if (isProcessing) return false;
         isProcessing = true;
@@ -237,17 +237,19 @@
         click(task.btn);
         await sleep(800);
 
-        // 2. 等待并点击"添加到队列"
+        // 2. 等待并点击"添加到队列"/"立即开始"/"开始"
         try {
-            const queueBtn = await waitFor(() => btnByContains('添加到队列'), 5000);
-            click(queueBtn);
+            const startBtn = await waitFor(() =>
+                btnByContains('添加到队列') || btnByText('立即开始') || btnByText('开始'),
+                5000);
+            click(startBtn);
             knownTaskIds.add(task.id);
-            log(`已加入队列: ${task.name}`);
+            log(`已启动/加入队列: ${task.name}`);
             await sleep(500);
             isProcessing = false;
             return true;
         } catch (e) {
-            log('未找到"添加到队列"按钮:', e.message);
+            log('未找到操作按钮:', e.message);
             isProcessing = false;
             return false;
         }
