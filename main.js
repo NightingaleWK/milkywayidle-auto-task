@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Milky Way Idle - 自动任务
 // @namespace    https://github.com/NightingaleWK
-// @version      1.0.0
+// @version      1.0.1
 // @description  自动接取任务、添加到队列，空闲时挂机采摘小行星带
 // @author       NightingaleWK
 // @match        https://www.milkywayidle.com/game*
@@ -46,9 +46,9 @@
         return null;
     }
 
-    /** 根据精确文本找任意可点击元素 */
+    /** 根据精确文本找任意可点击元素（含 div/span） */
     function findClickable(text) {
-        for (const el of document.querySelectorAll('button, [role="tab"], [role="button"], a')) {
+        for (const el of document.querySelectorAll('button, [role="tab"], [role="button"], a, div, span, li')) {
             if (el.textContent.trim() === text && el.offsetParent !== null) return el;
         }
         return null;
@@ -93,13 +93,17 @@
      */
     function scanTasks() {
         const tasks = [];
-        // "前往"按钮所在的任务卡片
         for (const btn of document.querySelectorAll('button')) {
             if (btn.textContent.trim() !== '前往' || btn.offsetParent === null) continue;
 
-            // 向上找到任务行/卡片
-            const card = btn.closest('li, tr, [class*="task"], div');
-            if (!card) continue;
+            // 向上遍历 DOM 找到包含"进度:"的卡片容器
+            let card = btn.parentElement;
+            for (let i = 0; i < 6; i++) {
+                if (!card) break;
+                if (card.textContent.includes('进度:')) break;
+                card = card.parentElement;
+            }
+            if (!card || !card.textContent.includes('进度:')) continue;
 
             const text = card.textContent;
             // 提取进度: "进度: 0 / 149"
@@ -110,9 +114,10 @@
             // 已完成的跳过
             if (progMatch && current >= target) continue;
 
-            // 提取任务名: 第一行技能名
-            const nameMatch = text.match(/([^\s]+)\s*[-–]\s*([^\n]+)/);
-            const name = nameMatch ? nameMatch[0].split('进度')[0].trim() : text.split('进度')[0].trim();
+            // 提取任务名："进度:"之前的文本，去掉按钮文字
+            const beforeProgress = text.split('进度:')[0].trim();
+            // 去掉末尾的数字（金币/代币数量）
+            const name = beforeProgress.replace(/[\d,]+$/g, '').trim() || '未知任务';
 
             // 去重
             const id = `${name}|${target}`;
@@ -151,24 +156,59 @@
 
     /** 导航到指定技能分类下的 tab */
     async function navigateTo(category, tabName) {
-        // 点击技能分类 (侧边栏)
-        const catEl = findClickable(category);
-        if (catEl) {
-            click(catEl);
-            await sleep(600);
+        // 优先：找侧边栏的技能图标（img 的 alt 包含 category）
+        const sidebarImgs = document.querySelectorAll('img[alt*="' + category + '"]');
+        for (const img of sidebarImgs) {
+            const parent = img.closest('button, a, [role="button"], div');
+            if (parent && parent.offsetParent) {
+                log('通过图标导航到:', category);
+                click(parent);
+                await sleep(800);
+                break;
+            }
+        }
+
+        // 备用：点击文本（仅限侧边栏区域）
+        if (sidebarImgs.length === 0) {
+            const catEl = findClickable(category);
+            if (catEl) {
+                log('通过文本导航到:', category);
+                click(catEl);
+                await sleep(800);
+            }
         }
 
         // 点击 tab
+        await sleep(400);
         const tab = findClickable(tabName);
-        if (tab) {
+        if (tab && tab.offsetParent) {
+            log('点击 tab:', tabName);
             click(tab);
-            await sleep(400);
+            await sleep(600);
+        } else {
+            log('tab 未找到:', tabName);
         }
 
-        // 如果有同名资源项，点击它
-        const resource = findClickable(tabName);
-        if (resource && resource !== tab) {
-            click(resource);
+        // 等面板渲染后，点击资源项（仅当 tab 和资源同名时）
+        const resourceBtns = document.querySelectorAll('button');
+        let resourceClicked = false;
+        for (const b of resourceBtns) {
+            if (b.textContent.trim() === tabName && b.offsetParent && b.textContent !== 'Unlimited') {
+                log('点击资源:', tabName);
+                click(b);
+                resourceClicked = true;
+                await sleep(400);
+                break;
+            }
+        }
+        // 备选：文本元素
+        if (!resourceClicked) {
+            const r = findClickable(tabName);
+            if (r && r !== tab && r.offsetParent && !r.textContent.includes('Unlimited')) {
+                log('点击资源(文本):', tabName);
+                click(r);
+                await sleep(400);
+            }
         }
     }
 
