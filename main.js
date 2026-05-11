@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Milky Way Idle - 自动任务
 // @namespace    https://github.com/NightingaleWK
-// @version      1.0.3
+// @version      1.0.4
 // @description  自动接取任务、添加到队列，空闲时挂机采摘小行星带
 // @author       NightingaleWK
 // @match        https://www.milkywayidle.com/game?characterId=*
@@ -114,10 +114,11 @@
             // 已完成的跳过
             if (progMatch && current >= target) continue;
 
-            // 提取任务名："进度:"之前的文本，去掉按钮文字
+            // 提取任务名："进度:"之前的文本，去掉按钮文字和面板标题
             const beforeProgress = text.split('进度:')[0].trim();
-            // 去掉末尾的数字（金币/代币数量）
-            const name = beforeProgress.replace(/[\d,]+$/g, '').trim() || '未知任务';
+            // 去掉末尾的数字和"任务"等面板标题前缀
+            let name = beforeProgress.replace(/[\d,]+$/g, '').trim();
+            name = name.replace(/^任务\s*/, '').trim() || '未知任务';
 
             // 去重
             const id = `${name}|${target}`;
@@ -189,27 +190,48 @@
             log('tab 未找到:', tabName);
         }
 
-        // 等面板渲染后，点击资源项（仅当 tab 和资源同名时）
-        const resourceBtns = document.querySelectorAll('button');
+        // 等面板渲染后，点击资源项
+        await sleep(500);
         let resourceClicked = false;
-        for (const b of resourceBtns) {
-            if (b.textContent.trim() === tabName && b.offsetParent && b.textContent !== 'Unlimited') {
-                log('点击资源:', tabName);
+
+        // 方法1: 找 button 含资源名
+        for (const b of document.querySelectorAll('button')) {
+            if (b.textContent.trim() === tabName && b.offsetParent && !b.textContent.includes('Unlimited')) {
+                log('点击资源(button):', tabName);
                 click(b);
                 resourceClicked = true;
-                await sleep(400);
                 break;
             }
         }
-        // 备选：文本元素
+
+        // 方法2: 找 action icon 图片（资源项旁的图标）
         if (!resourceClicked) {
-            const r = findClickable(tabName);
-            if (r && r !== tab && r.offsetParent && !r.textContent.includes('Unlimited')) {
-                log('点击资源(文本):', tabName);
-                click(r);
-                await sleep(400);
+            const imgs = document.querySelectorAll('img[alt*="action"], [class*="action_icon"], [class*="actionIcon"]');
+            for (const img of imgs) {
+                const row = img.closest('div, li');
+                if (row && row.textContent.includes(tabName) && row.offsetParent) {
+                    log('点击资源(icon):', tabName);
+                    click(img);
+                    resourceClicked = true;
+                    break;
+                }
             }
         }
+
+        // 方法3: 找包含资源名的可点击容器
+        if (!resourceClicked) {
+            for (const el of document.querySelectorAll('div, span, li')) {
+                const t = el.textContent.trim();
+                if (t === tabName && el.offsetParent && el.children.length > 0) {
+                    log('点击资源(div):', tabName);
+                    click(el);
+                    resourceClicked = true;
+                    break;
+                }
+            }
+        }
+
+        if (resourceClicked) await sleep(400);
     }
 
     /** 停止当前活动 */
