@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Milky Way Idle - 自动任务
 // @namespace    https://github.com/NightingaleWK
-// @version      1.0.7
+// @version      1.0.8
 // @description  自动接取任务、添加到队列，空闲时挂机采摘小行星带
 // @author       NightingaleWK
 // @match        https://www.milkywayidle.com/game?characterId=*
@@ -157,10 +157,11 @@
 
     /** 导航到指定技能分类下的 tab */
     async function navigateTo(category, tabName) {
-        // 优先：找侧边栏的技能图标（img 的 alt 包含 category）
-        const sidebarImgs = document.querySelectorAll('img[alt*="' + category + '"]');
-        for (const img of sidebarImgs) {
-            const parent = img.closest('button, a, [role="button"], div');
+        // 优先：找侧边栏的技能图标（svg/img 的 aria-label/alt 包含 category）
+        const sidebarIcons = document.querySelectorAll(
+            'img[alt*="' + category + '"], svg[aria-label*="' + category + '"]');
+        for (const icon of sidebarIcons) {
+            const parent = icon.closest('button, a, [role="button"], div');
             if (parent && parent.offsetParent) {
                 log('通过图标导航到:', category);
                 click(parent);
@@ -170,7 +171,7 @@
         }
 
         // 备用：点击文本（仅限侧边栏区域）
-        if (sidebarImgs.length === 0) {
+        if (sidebarIcons.length === 0) {
             const catEl = findClickable(category);
             if (catEl) {
                 log('通过文本导航到:', category);
@@ -194,14 +195,16 @@
         await sleep(500);
         let resourceClicked = false;
 
-        // 方法1: 找 action icon 图片（资源项旁的图标，优先级最高）
+        // 方法1: 找 action icon（svg/img，资源项旁的图标，优先级最高）
         {
-            const imgs = document.querySelectorAll('img[alt*="action"], [class*="action_icon"], [class*="actionIcon"]');
-            for (const img of imgs) {
-                const row = img.closest('div, li');
+            const iconSelector = 'img[alt*="action"], svg[aria-label*="action"], [class*="action_icon"], [class*="actionIcon"]';
+            const icons = document.querySelectorAll(iconSelector);
+            for (const icon of icons) {
+                const row = icon.closest('div, li, button');
                 if (row && row.textContent.includes(tabName) && row.offsetParent) {
                     log('点击资源(icon):', tabName);
-                    click(img);
+                    // 点击父容器或图标本身
+                    click(row.tagName === 'BUTTON' ? row : (icon.closest('button') || icon));
                     resourceClicked = true;
                     break;
                 }
