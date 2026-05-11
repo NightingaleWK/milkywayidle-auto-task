@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Milky Way Idle - 自动任务
 // @namespace    https://github.com/NightingaleWK
-// @version      1.0.2
+// @version      1.0.3
 // @description  自动接取任务、添加到队列，空闲时挂机采摘小行星带
 // @author       NightingaleWK
-// @match        https://www.milkywayidle.com/game*
+// @match        https://www.milkywayidle.com/game?characterId=*
 // @grant        none
 // ==/UserScript==
 
