@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Milky Way Idle - 自动任务
 // @namespace    https://github.com/NightingaleWK
-// @version      1.0.4
+// @version      1.0.5
 // @description  自动接取任务、添加到队列，空闲时挂机采摘小行星带
 // @author       NightingaleWK
 // @match        https://www.milkywayidle.com/game?characterId=*
@@ -194,18 +194,8 @@
         await sleep(500);
         let resourceClicked = false;
 
-        // 方法1: 找 button 含资源名
-        for (const b of document.querySelectorAll('button')) {
-            if (b.textContent.trim() === tabName && b.offsetParent && !b.textContent.includes('Unlimited')) {
-                log('点击资源(button):', tabName);
-                click(b);
-                resourceClicked = true;
-                break;
-            }
-        }
-
-        // 方法2: 找 action icon 图片（资源项旁的图标）
-        if (!resourceClicked) {
+        // 方法1: 找 action icon 图片（资源项旁的图标，优先级最高）
+        {
             const imgs = document.querySelectorAll('img[alt*="action"], [class*="action_icon"], [class*="actionIcon"]');
             for (const img of imgs) {
                 const row = img.closest('div, li');
@@ -218,11 +208,25 @@
             }
         }
 
+        // 方法2: 找 button 含资源名（排除 tab 按钮）
+        if (!resourceClicked) {
+            for (const b of document.querySelectorAll('button')) {
+                if (b.textContent.trim() === tabName && b.offsetParent
+                    && !b.closest('[role="tablist"], [class*="tab"]')) {
+                    log('点击资源(button):', tabName);
+                    click(b);
+                    resourceClicked = true;
+                    break;
+                }
+            }
+        }
+
         // 方法3: 找包含资源名的可点击容器
         if (!resourceClicked) {
             for (const el of document.querySelectorAll('div, span, li')) {
                 const t = el.textContent.trim();
-                if (t === tabName && el.offsetParent && el.children.length > 0) {
+                if (t === tabName && el.offsetParent && el.children.length > 0
+                    && !el.closest('[role="tablist"], [class*="tab"]')) {
                     log('点击资源(div):', tabName);
                     click(el);
                     resourceClicked = true;
