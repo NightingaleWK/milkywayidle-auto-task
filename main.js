@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Milky Way Idle - 自动任务
 // @namespace    https://github.com/NightingaleWK
-// @version      1.0.8
+// @version      1.0.9
 // @description  自动接取任务、添加到队列，空闲时挂机采摘小行星带
 // @author       NightingaleWK
 // @match        https://www.milkywayidle.com/game?characterId=*
@@ -25,6 +25,7 @@
     let isIdle = false;               // 是否在空闲挂机
     let isProcessing = false;         // 是否正在处理任务
     let knownTaskIds = new Set();     // 已处理的 task id
+    let busyUntil = 0;                // 近期刚开始活动的冷却窗口
 
     function log(...a) { console.log(CFG.LOG_PREFIX, ...a); }
 
@@ -46,10 +47,56 @@
         return null;
     }
 
+    function isVisible(el) {
+        return !!(el && el.offsetParent !== null);
+    }
+
+    function describeElement(el) {
+        if (!el) return 'null';
+        const text = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+        const cls = typeof el.className === 'string' ? el.className.trim().replace(/\s+/g, ' ') : '';
+        return `${el.tagName.toLowerCase()}${cls ? '.' + cls.split(/\s+/).slice(0, 3).join('.') : ''}${text ? ` "${text}"` : ''}`;
+    }
+
+    function findButtonIn(root, text, contains = false) {
+        if (!root || !root.querySelectorAll) return null;
+        for (const b of root.querySelectorAll('button, [role="button"]')) {
+            if (!isVisible(b)) continue;
+            const label = b.textContent.trim();
+            if (contains ? label.includes(text) : label === text) return b;
+        }
+        return null;
+    }
+
+    function findActionRoot(el) {
+        if (!el) return document.body;
+        return el.closest('[role="dialog"], [class*="modal"], [class*="panel"], [class*="card"], [class*="Card"], [class*="Dialog"], [class*="Panel"], form, main, section, article') || el.parentElement || document.body;
+    }
+
+    function logVisibleButtons(root, label) {
+        if (!root || !root.querySelectorAll) return;
+        const items = [];
+        for (const b of root.querySelectorAll('button, [role="button"]')) {
+            if (!isVisible(b)) continue;
+            const text = b.textContent.trim().replace(/\s+/g, ' ');
+            if (!text) continue;
+            items.push(describeElement(b));
+        }
+        log(label, items);
+    }
+
     /** 根据精确文本找任意可点击元素（含 div/span） */
     function findClickable(text) {
-        for (const el of document.querySelectorAll('button, [role="tab"], [role="button"], a, div, span, li')) {
-            if (el.textContent.trim() === text && el.offsetParent !== null) return el;
+        const preferred = document.querySelectorAll('button, [role="tab"], [role="button"], a');
+        for (const el of preferred) {
+            if (el.textContent.trim() === text && isVisible(el)) return el;
+        }
+
+        for (const el of document.querySelectorAll('div, span, li')) {
+            if (el.textContent.trim() !== text || !isVisible(el)) continue;
+            const clickableParent = el.closest('button, [role="tab"], [role="button"], a');
+            if (clickableParent) return clickableParent;
+            if (el.parentElement && isVisible(el.parentElement)) return el.parentElement;
         }
         return null;
     }
@@ -57,10 +104,48 @@
     /** 安全点击 (兼容 React 事件系统) */
     function click(el) {
         if (!el) return false;
-        el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-        el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
-        el.click();
+        log('点击目标:', describeElement(el));
+        try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch (e) {}
+        try { if (typeof el.focus === 'function') el.focus({ preventScroll: true }); } catch (e) {}
+
+        const rect = el.getBoundingClientRect();
+        const x = Math.max(0, Math.floor(rect.left + rect.width / 2));
+        const y = Math.max(0, Math.floor(rect.top + rect.height / 2));
+        const target = document.elementFromPoint(x, y) || el;
+        const eventTarget = target && (target === el || el.contains(target) || target.contains(el)) ? target : el;
+
+        const base = { bubbles: true, cancelable: true, composed: true, view: window, button: 0, buttons: 1 };
+        if (typeof PointerEvent === 'function') {
+            eventTarget.dispatchEvent(new PointerEvent('pointerover', base));
+            eventTarget.dispatchEvent(new PointerEvent('pointerenter', base));
+            eventTarget.dispatchEvent(new PointerEvent('pointerdown', base));
+        }
+        eventTarget.dispatchEvent(new MouseEvent('mouseover', base));
+        eventTarget.dispatchEvent(new MouseEvent('mouseenter', base));
+        eventTarget.dispatchEvent(new MouseEvent('mousedown', base));
+        if (typeof PointerEvent === 'function') {
+            eventTarget.dispatchEvent(new PointerEvent('pointerup', base));
+            eventTarget.dispatchEvent(new PointerEvent('pointerout', base));
+            eventTarget.dispatchEvent(new PointerEvent('pointerleave', base));
+        }
+        eventTarget.dispatchEvent(new MouseEvent('mouseup', base));
+        eventTarget.dispatchEvent(new MouseEvent('click', base));
+        if (eventTarget !== el) {
+            el.dispatchEvent(new MouseEvent('click', base));
+        }
+        if (typeof el.click === 'function') el.click();
         return true;
+    }
+
+    async function clickAndConfirm(el, confirmFn, timeout = 2500) {
+        if (!el) return false;
+        click(el);
+        try {
+            await waitFor(confirmFn, timeout);
+            return true;
+        } catch (e) {
+            return false;
+        }
     }
 
     /** 等待某条件成立 (轮询) */
@@ -253,6 +338,15 @@
         return false;
     }
 
+    function hasActiveActivity() {
+        if (btnByText('停止')) return true;
+        return false;
+    }
+
+    function markBusy(ms = 10000) {
+        busyUntil = Math.max(busyUntil, Date.now() + ms);
+    }
+
     // ─── 自动操作 ────────────────────────────────
 
     /** 处理单个任务: 前往 → 开始/添加到队列 */
@@ -268,8 +362,9 @@
 
         // 2. 等待任务详情页加载（文本框出现剩余数量）
         const remaining = task.target - task.count;
+        let detailInput = null;
         try {
-            await waitFor(() => {
+            detailInput = await waitFor(() => {
                 const inputs = document.querySelectorAll('input[type="text"], input:not([type])');
                 for (const inp of inputs) {
                     if (inp.value == remaining || (remaining <= 0 && inp.value === '∞')) return inp;
@@ -282,11 +377,24 @@
 
         // 3. 点击"添加到队列"/"立即开始"/"开始"
         try {
+            const taskRoot = findActionRoot(detailInput);
+            logVisibleButtons(taskRoot, '任务面板可见按钮:');
             const startBtn = await waitFor(() =>
-                btnByContains('添加到队列') || btnByText('立即开始') || btnByText('开始'),
+                findButtonIn(taskRoot, '添加到队列', true) || findButtonIn(taskRoot, '立即开始') || findButtonIn(taskRoot, '开始')
+                || btnByContains('添加到队列') || btnByText('立即开始') || btnByText('开始'),
                 3000);
-            click(startBtn);
+            log('准备点击任务开始按钮:', describeElement(startBtn));
+            const confirmed = await clickAndConfirm(startBtn, () =>
+                hasActiveActivity()
+                || (!findButtonIn(taskRoot, '添加到队列', true) && !findButtonIn(taskRoot, '立即开始') && !findButtonIn(taskRoot, '开始')),
+                2500);
+            if (!confirmed) {
+                log('点击开始后未确认进入队列，保留任务等待下轮重试:', task.name);
+                isProcessing = false;
+                return false;
+            }
             knownTaskIds.add(task.id);
+            markBusy();
             log(`已启动/加入队列: ${task.name}`);
             await sleep(500);
             isProcessing = false;
@@ -309,14 +417,27 @@
         // 点击 "Unlimited"
         try {
             const unlimitedBtn = await waitFor(() => btnByText('Unlimited'), 3000);
-            click(unlimitedBtn);
+            const clicked = await clickAndConfirm(unlimitedBtn, () =>
+                !!btnByText('立即开始') || !!btnByContains('添加到队列'),
+                1500);
             await sleep(300);
 
             // 点击 "立即开始" 或 "添加到队列"
-            const startBtn = await waitFor(() => btnByText('立即开始') || btnByContains('添加到队列'), 3000);
-            click(startBtn);
-            isIdle = true;
-            log('空闲挂机已启动');
+            const idleRoot = findActionRoot(unlimitedBtn);
+            logVisibleButtons(idleRoot, '空闲面板可见按钮:');
+            const startBtn = await waitFor(() =>
+                findButtonIn(idleRoot, '立即开始') || findButtonIn(idleRoot, '添加到队列', true)
+                || btnByText('立即开始') || btnByContains('添加到队列'),
+                3000);
+            log('准备点击空闲开始按钮:', describeElement(startBtn));
+            const started = await clickAndConfirm(startBtn, () => hasActiveActivity(), 2500);
+            if (clicked && started) {
+                isIdle = true;
+                markBusy();
+                log('空闲挂机已启动');
+            } else {
+                log('空闲入口或开始按钮点击后未确认进入状态，稍后重试');
+            }
         } catch (e) {
             log('启动空闲失败:', e.message);
         }
@@ -328,6 +449,11 @@
         // 如果正在处理任务，跳过
         if (isProcessing) {
             log('正在处理任务中，跳过本轮检查');
+            return;
+        }
+
+        if (Date.now() < busyUntil) {
+            log('活动冷却中，跳过空闲切换');
             return;
         }
 
@@ -350,7 +476,17 @@
                 const ok = await processOneTask(task);
                 if (ok) await sleep(300);
             }
+            if (hasActiveActivity()) {
+                isIdle = false;
+                log('检测到当前已有活动，暂停空闲挂机切换');
+                return;
+            }
         } else if (!isIdle) {
+            if (hasActiveActivity()) {
+                isIdle = false;
+                log('检测到当前已有活动，跳过空闲挂机');
+                return;
+            }
             // 没有任务且未挂机 → 启动挂机
             await startIdle();
         }
