@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Milky Way Idle - 自动任务
 // @namespace    https://github.com/NightingaleWK
-// @version      1.0.6
+// @version      1.0.7
 // @description  自动接取任务、添加到队列，空闲时挂机采摘小行星带
 // @author       NightingaleWK
 // @match        https://www.milkywayidle.com/game?characterId=*
@@ -263,15 +263,16 @@
         click(task.btn);
         await sleep(800);
 
-        // 2. 等待任务详情页加载（文本框出现目标数量）
+        // 2. 等待任务详情页加载（文本框出现剩余数量）
+        const remaining = task.target - task.count;
         try {
             await waitFor(() => {
                 const inputs = document.querySelectorAll('input[type="text"], input:not([type])');
                 for (const inp of inputs) {
-                    if (inp.value == task.target || inp.value === '∞') return inp;
+                    if (inp.value == remaining || (remaining <= 0 && inp.value === '∞')) return inp;
                 }
                 return null;
-            }, 5000);
+            }, 3000);
         } catch (e) {
             log('等待详情页超时，尝试直接匹配按钮');
         }
